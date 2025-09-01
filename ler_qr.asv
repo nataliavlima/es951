@@ -1,0 +1,24 @@
+clc; close all force; clear all;
+
+% Parametros
+img = "bob.jpg";
+qr = 'teste.png';     % QR base (preto no branco)
+altura_qr = size(qr, 1);
+largura_qr = size(qr, 2);
+
+% define imagem no tamanho do QR CODE
+img = imresize(altura_qr, largura_qr);
+imshow(img);
+
+% Le e transcreve o QR Code
+Iq = imread(qr);
+msg = readBarcode(Iq);
+disp("Decoded barcode message: " + msg)
+
+% Gray Scale e Binarizacao
+qr_gray =  rgb2gray(qr);
+BW = imbinarize(qr_gray); % binariza a imagem Otsu's method
+
+% HSV da imagem desejada
+img_hsv = rgb2hsv(im);
+imshow(img_hsv);
