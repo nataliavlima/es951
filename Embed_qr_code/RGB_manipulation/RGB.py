@@ -7,7 +7,7 @@ import os
 base_path = os.path.dirname(os.path.abspath(__file__))  # pega a pasta do .py
 
 # === 1. Gerar o QR Code ===
-data = "https://www.linkedin.com/in/natalia-vieira-lima-4026bb1a9/"
+data = "Natália Vieira Lima"
 qr = qrcode.QRCode(
     version=2,
     error_correction=qrcode.constants.ERROR_CORRECT_H,
@@ -27,9 +27,10 @@ cv2.imwrite(os.path.join(base_path, "qr_gray.png"), qr_array)
 qr_array = cv2.resize(qr_array, (200, 200), interpolation=cv2.INTER_AREA)
 
 # === 2. Carregar imagem base ===
-path = os.path.join(base_path, "bob.jpg")  # imagem na mesma pasta
-if not os.path.exists(path):
-    raise FileNotFoundError(f"⚠️ Imagem base não encontrada: {path}")
+path = os.path.join(base_path, "CN.png")  # imagem na mesma pasta
+#path = os.path.join(base_path, "dogs.jpeg")  # imagem na mesma pasta
+#path = os.path.join(base_path, "bob.jpg")  # imagem na mesma pasta
+
 
 img = cv2.imread(path)
 cv2.imwrite(os.path.join(base_path, "original.png"), img)
@@ -45,7 +46,7 @@ b, g, r = cv2.split(img)
 # === 4. Criar máscara ===
 qr_norm = qr_array / 255.0
 mask = 1 - qr_norm
-alpha = 1
+alpha = 0.6
 
 # === 5. Função para aplicar QR em um canal ===
 def aplicar_qr(canal):
