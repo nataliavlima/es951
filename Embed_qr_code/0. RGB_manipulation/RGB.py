@@ -1,10 +1,11 @@
+
 import cv2
 import numpy as np
 import qrcode
 import os
 
 # === 0. Caminho base da pasta do projeto ===
-base_path = os.path.dirname(os.path.abspath(__file__))  # pega a pasta do .py
+base_path = os.path.dirname(os.path.abspath(__file__))
 
 # === 1. Gerar o QR Code ===
 data = "Natália Vieira Lima"
@@ -25,20 +26,39 @@ cv2.imwrite(os.path.join(base_path, "qr_gray.png"), qr_array)
 
 # Redimensionar o QR
 qr_array = cv2.resize(qr_array, (200, 200), interpolation=cv2.INTER_AREA)
+qr_h, qr_w = qr_array.shape
 
-# === 2. Carregar imagem base ===
-path = os.path.join(base_path, "CN.png")  # imagem na mesma pasta
+# === 2. Carregar imagem base (BOB) ===
+#path = os.path.join(base_path, "CN.png")  # imagem na mesma pasta
 #path = os.path.join(base_path, "dogs.jpeg")  # imagem na mesma pasta
-#path = os.path.join(base_path, "bob.jpg")  # imagem na mesma pasta
-
+path = os.path.join(base_path, "bob.jpg")  # imagem na mesma pasta
 
 img = cv2.imread(path)
 cv2.imwrite(os.path.join(base_path, "original.png"), img)
+
 h, w, _ = img.shape
 
-# Centralizar o QR
-x_offset = (w - qr_array.shape[1]) // 2
-y_offset = (h - qr_array.shape[0]) // 2
+# ============================================================
+# 🔥 NOVO: CORTAR A IMAGEM DO BOB PARA O TAMANHO DO QR
+# ============================================================
+
+# coordenadas do recorte central
+x1 = (w - qr_w) // 2
+y1 = (h - qr_h) // 2
+x2 = x1 + qr_w
+y2 = y1 + qr_h
+
+# aplica o corte central
+img = img[y1:y2, x1:x2]
+
+# salva imagem cortada
+cv2.imwrite(os.path.join(base_path, "bob_cortado.png"), img)
+
+# atualiza dimensões após o crop
+h, w, _ = img.shape
+print(f"Imagem cortada para: {w}x{h} px")
+
+# ============================================================
 
 # === 3. Separar canais RGB ===
 b, g, r = cv2.split(img)
@@ -46,14 +66,15 @@ b, g, r = cv2.split(img)
 # === 4. Criar máscara ===
 qr_norm = qr_array / 255.0
 mask = 1 - qr_norm
-alpha = 0.6
+alpha = 1
 
 # === 5. Função para aplicar QR em um canal ===
 def aplicar_qr(canal):
     canal_mod = canal.copy().astype(np.float32)
-    roi = canal_mod[y_offset:y_offset + qr_array.shape[0], x_offset:x_offset + qr_array.shape[1]]
+    # agora o QR ocupa a imagem inteira (0,0)
+    roi = canal_mod[0:qr_h, 0:qr_w]
     roi_new = roi * (1.0 - alpha * mask)
-    canal_mod[y_offset:y_offset + qr_array.shape[0], x_offset:x_offset + qr_array.shape[1]] = np.clip(roi_new, 0, 255)
+    canal_mod[0:qr_h, 0:qr_w] = np.clip(roi_new, 0, 255)
     return canal_mod.astype(np.uint8)
 
 # === 6. Aplicar em cada canal e salvar ===
@@ -70,7 +91,7 @@ img_B = cv2.merge((b_mod, g, r))
 cv2.imwrite(os.path.join(base_path, "saida_qr_B.png"), img_B)
 
 # === 7. Mostrar as imagens ===
-cv2.imshow("Original", img)
+cv2.imshow("Original Cortada", img)
 cv2.imshow("QR Gray", qr_array)
 cv2.imshow("Modulado R", img_R)
 cv2.imshow("Modulado G", img_G)
@@ -78,4 +99,4 @@ cv2.imshow("Modulado B", img_B)
 cv2.waitKey(0)
 cv2.destroyAllWindows()
 
-print(f"✅ Todas as 5 imagens foram salvas em:\n{base_path}")
+print(f"✅ Todas as imagens foram salvas em:\n{base_path}")
