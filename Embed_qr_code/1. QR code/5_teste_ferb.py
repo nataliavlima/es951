@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # ======================================================
-# CONFIGURAÇÃO DE CAMINHOS (ROBUSTO)
+# CONFIGURAÇÃO DE CAMINHOS
 # ======================================================
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -12,24 +12,24 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 QR_PATH = os.path.join(
     BASE_DIR,
     "qr_referencia",
-    "qr_v10_ecH.png"
+    "qr_v10_ecH.png"   # <-- troque para v12 se quiser
 )
 
 BASE_IMAGE_PATH = os.path.join(
     BASE_DIR,
     "imagens_base",
-    #"bob.png"
     #"FERB.jpg"
+    #"bob.png"
     "homer.png"
 )
 
 OUTPUT_PATH = os.path.join(
     BASE_DIR,
-    "resultado_qr_estilizado_22.png"
+    "resultado_qr_estilizado_final.png"
 )
 
 # ======================================================
-# PARTE 2 — MAPEAMENTO DO QR CODE
+# PARTE 1 — MAPEAMENTO DO QR CODE
 # ======================================================
 
 def load_and_binarize_qr(image_path):
@@ -40,13 +40,12 @@ def load_and_binarize_qr(image_path):
     return binary
 
 
-def remove_quiet_zone(img, num_modules, border_modules):
-    h, w = img.shape
+def remove_quiet_zone(img, num_modules, border_modules=1):
+    h, _ = img.shape
     module_size = h // (num_modules + 2 * border_modules)
     start = border_modules * module_size
     end = start + num_modules * module_size
-    qr_no_border = img[start:end, start:end]
-    return qr_no_border, module_size
+    return img[start:end, start:end], module_size
 
 
 def extract_module_matrix(qr_img, num_modules, module_size):
@@ -77,63 +76,86 @@ def generate_protected_mask(num_modules):
     return mask
 
 
-def map_qr_code(image_path, num_modules, border_modules=1):
+def map_qr_code(image_path, num_modules):
     img_bin = load_and_binarize_qr(image_path)
-    qr_no_border, module_size = remove_quiet_zone(
-        img_bin, num_modules, border_modules
-    )
-    qr_matrix = extract_module_matrix(
-        qr_no_border, num_modules, module_size
-    )
+    qr_no_border, module_size = remove_quiet_zone(img_bin, num_modules)
+    qr_matrix = extract_module_matrix(qr_no_border, num_modules, module_size)
     protected_mask = generate_protected_mask(num_modules)
     return qr_matrix, protected_mask, module_size
 
 
 # ======================================================
-# PARTE 3.1 — PRÉ-PROCESSAMENTO DA IMAGEM BASE
+# PARTE 2 — PRÉ-PROCESSAMENTO AVANÇADO DA IMAGEM BASE
 # ======================================================
-
-def load_image_gray(image_path):
-    img = cv2.imread(image_path)
-    if img is None:
-        raise ValueError("Imagem base não encontrada.")
-    return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
 
 def center_crop_square(image):
     h, w = image.shape
     side = min(h, w)
-    start_y = (h - side) // 2
-    start_x = (w - side) // 2
-    return image[start_y:start_y + side, start_x:start_x + side]
+    y0 = (h - side) // 2
+    x0 = (w - side) // 2
+    return image[y0:y0 + side, x0:x0 + side]
 
 
 def preprocess_base_image(image_path, num_modules):
-    gray = load_image_gray(image_path)
-    square = center_crop_square(gray)
+    img = cv2.imread(image_path)
+    if img is None:
+        raise ValueError("Imagem base não encontrada.")
+
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+
+    th = cv2.adaptiveThreshold(
+        blur,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        11,
+        2
+    )
+
+    th = 255 - th  # rosto escuro
+
+    square = center_crop_square(th)
+
     resized = cv2.resize(
         square,
         (num_modules, num_modules),
         interpolation=cv2.INTER_AREA
     )
+
     normalized = resized.astype(np.float32) / 255.0
+
     return normalized
 
 
 # ======================================================
-# PARTE 3.2 — INCORPORAÇÃO (HALFTONE BINÁRIO SIMPLES)
+# PARTE 3 — INCORPORAÇÃO POR FUSÃO CONTÍNUA
 # ======================================================
 
-def embed_image(qr_matrix, base_img, protected_mask):
-    embedded = qr_matrix.copy()
+def embed_image_fusion(qr_matrix, base_img, protected_mask, alpha=0.75):
+    beta = 1.0 - alpha
+    embedded = qr_matrix.copy().astype(np.float32)
 
     for y in range(qr_matrix.shape[0]):
         for x in range(qr_matrix.shape[1]):
-            if protected_mask[y, x] == 0:
-                embedded[y, x] = 1 if base_img[y, x] < 0.55 else 0
 
-    return embedded
+            if protected_mask[y, x] == 1:
+                continue
 
+            qr_val = qr_matrix[y, x]
+            img_val = base_img[y, x]
+
+            combined = alpha * qr_val + beta * (1.0 - img_val)
+
+            embedded[y, x] = 1 if combined > 0.5 else 0
+
+    return embedded.astype(np.uint8)
+
+
+# ======================================================
+# PARTE 4 — RENDERIZAÇÃO FINAL
+# ======================================================
 
 def render_qr_image(matrix, module_size):
     size = matrix.shape[0] * module_size
@@ -150,16 +172,16 @@ def render_qr_image(matrix, module_size):
 
 
 # ======================================================
-# EXECUÇÃO DO EXPERIMENTO
+# EXECUÇÃO
 # ======================================================
 
 if __name__ == "__main__":
 
-    print("Iniciando processamento do QR Code estilizado...")
+    print("Iniciando QR Code artístico...")
     print("QR encontrado:", os.path.exists(QR_PATH))
     print("Imagem base encontrada:", os.path.exists(BASE_IMAGE_PATH))
 
-    num_modules = 33  # Versão 4 do QR Code
+    num_modules = 57  # v10 → 57 | v12 → 65
 
     qr_matrix, protected_mask, module_size = map_qr_code(
         QR_PATH, num_modules
@@ -169,8 +191,8 @@ if __name__ == "__main__":
         BASE_IMAGE_PATH, num_modules
     )
 
-    embedded_matrix = embed_image(
-        qr_matrix, base_img, protected_mask
+    embedded_matrix = embed_image_fusion(
+        qr_matrix, base_img, protected_mask, alpha=0.75
     )
 
     final_qr = render_qr_image(
@@ -181,4 +203,4 @@ if __name__ == "__main__":
     plt.imsave("visualizacao_qr.png", final_qr, cmap="gray")
 
     print("Processamento finalizado com sucesso.")
-    print("Arquivo gerado em:", OUTPUT_PATH)
+    print("Arquivo salvo em:", OUTPUT_PATH)

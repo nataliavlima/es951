@@ -25,7 +25,7 @@ BASE_IMAGE_PATH = os.path.join(
 
 OUTPUT_PATH = os.path.join(
     BASE_DIR,
-    "resultado_qr_estilizado_22.png"
+    "resultado_qr_estilizado_3.png"
 )
 
 # ======================================================
@@ -124,17 +124,6 @@ def preprocess_base_image(image_path, num_modules):
 # PARTE 3.2 — INCORPORAÇÃO (HALFTONE BINÁRIO SIMPLES)
 # ======================================================
 
-def embed_image(qr_matrix, base_img, protected_mask):
-    embedded = qr_matrix.copy()
-
-    for y in range(qr_matrix.shape[0]):
-        for x in range(qr_matrix.shape[1]):
-            if protected_mask[y, x] == 0:
-                embedded[y, x] = 1 if base_img[y, x] < 0.55 else 0
-
-    return embedded
-
-
 def render_qr_image(matrix, module_size):
     size = matrix.shape[0] * module_size
     img = np.ones((size, size), dtype=np.uint8) * 255
@@ -148,6 +137,66 @@ def render_qr_image(matrix, module_size):
                 ] = 0
     return img
 
+def embed_image(qr_matrix, base_img, protected_mask,
+                           img_threshold=0.5, delta=0.15):
+    """
+    Incorporação controlada da imagem base no QR Code.
+
+    img_threshold : limiar de luminância da imagem
+    delta         : margem de confiança para alterar o módulo
+    """
+
+    embedded = qr_matrix.copy()
+
+    for y in range(qr_matrix.shape[0]):
+        for x in range(qr_matrix.shape[1]):
+
+            if protected_mask[y, x] == 1:
+                continue
+
+            img_val = base_img[y, x]
+            qr_val = qr_matrix[y, x]
+
+            # Região claramente escura na imagem
+            if img_val < (img_threshold - delta):
+                embedded[y, x] = 1  # força preto
+
+            # Região claramente clara na imagem
+            elif img_val > (img_threshold + delta):
+                embedded[y, x] = 0  # força branco
+
+            # Região ambígua → mantém QR original
+            else:
+                embedded[y, x] = qr_val
+
+    return embedded
+
+def embed_image_fusion(qr_matrix, base_img, protected_mask,
+                       alpha=0.7):
+    """
+    Incorporação por fusão contínua simples (Garateguy et al.)
+
+    alpha : peso do QR Code (0.6–0.8 recomendado)
+    beta  : peso da imagem base (1 - alpha)
+    """
+
+    beta = 1.0 - alpha
+    embedded = qr_matrix.copy().astype(np.float32)
+
+    for y in range(qr_matrix.shape[0]):
+        for x in range(qr_matrix.shape[1]):
+
+            if protected_mask[y, x] == 1:
+                continue
+
+            qr_val = qr_matrix[y, x]
+            img_val = base_img[y, x]
+
+            combined = alpha * qr_val + beta * (1.0 - img_val)
+
+            embedded[y, x] = 1 if combined > 0.5 else 0
+
+    return embedded.astype(np.uint8)
 
 # ======================================================
 # EXECUÇÃO DO EXPERIMENTO
@@ -169,9 +218,11 @@ if __name__ == "__main__":
         BASE_IMAGE_PATH, num_modules
     )
 
-    embedded_matrix = embed_image(
-        qr_matrix, base_img, protected_mask
+    embedded_matrix = embed_image_fusion(
+    qr_matrix, base_img, protected_mask,
+    alpha=0.6
     )
+
 
     final_qr = render_qr_image(
         embedded_matrix, module_size

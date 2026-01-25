@@ -6,7 +6,7 @@ import os
 
 data = "https://www.fem.unicamp.br/"
 
-versions = [2, 4, 6]
+versions = [8, 10, 12]
 
 error_corrections = {
     "L": qrcode.constants.ERROR_CORRECT_L,
