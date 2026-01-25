@@ -18,20 +18,20 @@ ERROR_CORRECTION = qrcode.constants.ERROR_CORRECT_H
 
 BORDER = 4  # quiet zone (módulos)
 
-# Duas imagens para a análise
 IMAGES = [
     "FERB.jpg",
     "homer.png",
 ]
 
-# Saída (subpastas por imagem)
 OUTPUT_ROOT = os.path.join(BASE_DIR, "resultados_6.1")
 os.makedirs(OUTPUT_ROOT, exist_ok=True)
 
+# Pasta para histogramas
+HIST_DIR = os.path.join(OUTPUT_ROOT, "histogramas")
+os.makedirs(HIST_DIR, exist_ok=True)
+
 # ======================================================
-# GRID DE PARÂMETROS (combinações)
-# Mantive o MESMO grid enxuto do código 1 (16 por imagem),
-# e deixei os clamps fixos (bvm/wvm) para não explodir o total.
+# GRID DE PARÂMETROS
 # ======================================================
 
 GRID = {
@@ -42,13 +42,12 @@ GRID = {
     "v_white":     [255],
     "s_boost":     [1.10],
     "gamma":       [0.70],
-    # clamps (fixos neste lote; você pode transformar em [120,150] etc. depois)
     "black_v_max": [140],
     "white_v_min": [210],
 }
 
 # ======================================================
-# ETAPA 1 — GERAR MATRIZ LÓGICA DO QR (inclui BORDER)
+# QR MATRIX
 # ======================================================
 
 def generate_qr_matrix(data, version, error_correction, border):
@@ -60,10 +59,10 @@ def generate_qr_matrix(data, version, error_correction, border):
     )
     qr.add_data(data)
     qr.make(fit=False)
-    return np.array(qr.get_matrix(), dtype=np.uint8)  # 1 = preto
+    return np.array(qr.get_matrix(), dtype=np.uint8)
 
 # ======================================================
-# MÁSCARA DE MÓDULOS FUNCIONAIS (NÃO MODULAR)
+# FUNCTION MASK
 # ======================================================
 
 def alignment_positions(version):
@@ -90,7 +89,6 @@ def build_function_module_mask(version, border):
     total = n + 2 * border
     mask = np.zeros((total, total), dtype=bool)
 
-    # quiet zone toda protegida
     mask[:border, :] = True
     mask[-border:, :] = True
     mask[:, :border] = True
@@ -101,34 +99,28 @@ def build_function_module_mask(version, border):
     def mark_rect(x0, y0, w, h):
         mask[y0:y0+h, x0:x0+w] = True
 
-    # finder + separadores (9x9)
     mark_rect(off + 0,     off + 0,     9, 9)
     mark_rect(off + n-8,   off + 0,     9, 9)
     mark_rect(off + 0,     off + n-8,   9, 9)
 
-    # timing
     y_t = off + 6
     x_t = off + 6
     mask[y_t, off+8:off+(n-8)] = True
     mask[off+8:off+(n-8), x_t] = True
 
-    # dark module fixo
     dark_r = 4 * version + 9
     dark_c = 8
     mask[off + dark_r, off + dark_c] = True
 
-    # format info (aproximação conservadora)
     mask[off + 8, off + 0:off + 9] = True
     mask[off + 8, off + (n-8):off + n] = True
     mask[off + 0:off + 9, off + 8] = True
     mask[off + (n-8):off + n, off + 8] = True
 
-    # version info (v>=7)
     if version >= 7:
         mark_rect(off + (n-11), off + 0, 3, 6)
         mark_rect(off + 0, off + (n-11), 6, 3)
 
-    # alignment patterns (5x5)
     pos = alignment_positions(version)
     if pos:
         for cy in pos:
@@ -142,7 +134,7 @@ def build_function_module_mask(version, border):
     return mask
 
 # ======================================================
-# UTIL — CROP QUADRADO CENTRAL
+# UTIL — CROP
 # ======================================================
 
 def center_crop_square(img):
@@ -153,7 +145,7 @@ def center_crop_square(img):
     return img[y0:y0+side, x0:x0+side]
 
 # ======================================================
-# ETAPA 3 — PRÉ-PROCESSAMENTO DA IMAGEM BASE
+# PREPROCESS
 # ======================================================
 
 def preprocess_base_image_color(image_path, target_shape):
@@ -171,7 +163,7 @@ def preprocess_base_image_color(image_path, target_shape):
     return img_bgr, base_gray_float
 
 # ======================================================
-# MAPAS PERCEPTUAIS
+# MAPAS
 # ======================================================
 
 def edge_enhanced_map(base_gray_float):
@@ -193,7 +185,7 @@ def texture_map(base_gray_float, ksize=3):
     return np.clip(mag / p95, 0.0, 1.0).astype(np.float32)
 
 # ======================================================
-# RENDER HSV + ALPHA ADAPTATIVO + PROTEÇÃO FUNCIONAL
+# RENDER
 # ======================================================
 
 def render_modulated_qr_hsv(
@@ -218,17 +210,14 @@ def render_modulated_qr_hsv(
     alpha = alpha_max - (alpha_max - alpha_min) * texture_small
     alpha = np.clip(alpha * (1.0 - 0.18 * perceptual_small), 0.05, 0.95).astype(np.float32)
 
-    # protege módulos funcionais (força alvo do QR nesses locais)
     alpha = np.where(function_mask, 1.0, alpha).astype(np.float32)
 
     targetV = np.where(qr_matrix == 1, v_black, v_white).astype(np.float32)
     V_final = (1.0 - alpha) * Vch + alpha * targetV
 
-    # clamps de contraste
     V_final = np.where(qr_matrix == 1, np.minimum(V_final, black_v_max), V_final)
     V_final = np.where(qr_matrix == 0, np.maximum(V_final, white_v_min), V_final)
 
-    # quiet zone garantida branca
     V_final = np.where(function_mask & (qr_matrix == 0), 255.0, V_final)
     V_final = np.clip(V_final, 0, 255)
 
@@ -240,8 +229,7 @@ def render_modulated_qr_hsv(
     return out
 
 # ======================================================
-# UTIL — nome do arquivo na ordem pedida
-# qr_<stem>_ms12_a0.10-0.80_vb40_vw255_sb1.10_g0.70_bvm140_wvm210.png
+# TAG
 # ======================================================
 
 def make_tag(p):
@@ -257,7 +245,54 @@ def make_tag(p):
     )
 
 # ======================================================
-# EXECUÇÃO EM LOTE (FERB + Homer)
+# HISTOGRAMAS (salvar)
+# Mesmos gráficos do código 1: Cinza antes vs Cinza equalizado
+# ======================================================
+
+def gray_and_equalized_for_hist(image_path, target_shape):
+    img_bgr = cv2.imread(image_path, cv2.IMREAD_COLOR)
+    if img_bgr is None:
+        raise ValueError(f"Imagem não encontrada: {image_path}")
+
+    img_bgr = center_crop_square(img_bgr)
+    H, W = target_shape
+    img_bgr = cv2.resize(img_bgr, (W, H), interpolation=cv2.INTER_AREA)
+
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    gray_eq = cv2.equalizeHist(gray)
+    return gray, gray_eq
+
+def hist_256(gray_u8):
+    h, _ = np.histogram(gray_u8.flatten(), bins=256, range=(0, 256))
+    return h
+
+def save_histograms_two_images(base_dir, target_shape, out_dir):
+    imgs = [
+        ("FERB", os.path.join(base_dir, "imagens_base", "FERB.jpg")),
+        ("homer", os.path.join(base_dir, "imagens_base", "homer.png")),
+    ]
+
+    for name, path in imgs:
+        gray, gray_eq = gray_and_equalized_for_hist(path, target_shape)
+        h0 = hist_256(gray)
+        h1 = hist_256(gray_eq)
+
+        plt.figure(figsize=(8, 4))
+        plt.plot(h0, label="Cinza (antes)")
+        plt.plot(h1, label="Cinza equalizado (depois)")
+        plt.title(f"Histograma (256 bins) — {name}")
+        plt.xlabel("Intensidade (0–255)")
+        plt.ylabel("Contagem de pixels")
+        plt.legend()
+        plt.tight_layout()
+
+        out_png = os.path.join(out_dir, f"hist_{name}_before_after_equalize.png")
+        plt.savefig(out_png, dpi=200)
+        plt.close()
+        print(f"[OK] Histograma salvo: {out_png}")
+
+# ======================================================
+# EXECUÇÃO
 # ======================================================
 
 if __name__ == "__main__":
@@ -265,6 +300,9 @@ if __name__ == "__main__":
 
     qr_matrix = generate_qr_matrix(DATA, QR_VERSION, ERROR_CORRECTION, BORDER)
     function_mask = build_function_module_mask(QR_VERSION, BORDER)
+
+    # Salva histogramas 1x (antes do batch)
+    save_histograms_two_images(BASE_DIR, qr_matrix.shape, HIST_DIR)
 
     keys = list(GRID.keys())
     combos = list(product(*[GRID[k] for k in keys]))
@@ -317,11 +355,10 @@ if __name__ == "__main__":
             ok = cv2.imwrite(out_png, final_qr_bgr)
             plt.imsave(out_dbg, perceptual, cmap="gray")
 
-            # (Opcional) auto-teste de decode para log rápido no console
             decoded, _, _ = det.detectAndDecode(final_qr_bgr)
             if not ok:
                 print(f"[ERRO] Falhou ao salvar: {out_png}")
-            # descomente se quiser logar tudo:
+            # se quiser logar:
             # print("OK" if decoded else "FAIL", os.path.basename(out_png))
 
         print(f"Finalizado: {img_name}")

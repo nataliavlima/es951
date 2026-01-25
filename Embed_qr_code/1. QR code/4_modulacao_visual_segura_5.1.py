@@ -26,9 +26,12 @@ IMAGES = [
 OUTPUT_ROOT = os.path.join(BASE_DIR, "resultados_5.1")
 os.makedirs(OUTPUT_ROOT, exist_ok=True)
 
+# Subpasta para histogramas
+HIST_DIR = os.path.join(OUTPUT_ROOT, "histogramas")
+os.makedirs(HIST_DIR, exist_ok=True)
+
 # ======================================================
 # GRID DE PARÂMETROS (combinações)
-# (mantendo o grid enxuto: 8 configurações por imagem)
 # ======================================================
 
 GRID = {
@@ -54,8 +57,7 @@ def generate_qr_matrix(data, version, error_correction, border=BORDER):
     )
     qr.add_data(data)
     qr.make(fit=False)
-    # qrcode retorna True para módulo PRETO
-    return np.array(qr.get_matrix(), dtype=np.uint8)
+    return np.array(qr.get_matrix(), dtype=np.uint8)  # 1 = preto
 
 # ======================================================
 # UTIL — CROP QUADRADO CENTRAL
@@ -73,11 +75,6 @@ def center_crop_square(img):
 # ======================================================
 
 def preprocess_base_image_color(image_path, target_shape):
-    """
-    Retorna:
-      - base_bgr_resized: imagem BGR (0..255) redimensionada para (H,W) do QR
-      - base_gray_float: mapa em cinza float (0..1) do mesmo tamanho
-    """
     img_bgr = cv2.imread(image_path, cv2.IMREAD_COLOR)
     if img_bgr is None:
         raise ValueError(f"Imagem base nao encontrada: {image_path}")
@@ -121,8 +118,7 @@ def texture_map(base_gray_float, ksize=3):
     if p95 <= 1e-6:
         return np.zeros_like(base_gray_float, dtype=np.float32)
 
-    t = np.clip(mag / p95, 0.0, 1.0).astype(np.float32)
-    return t
+    return np.clip(mag / p95, 0.0, 1.0).astype(np.float32)
 
 # ======================================================
 # ETAPA 4 — RENDERIZAÇÃO HSV (S e V) + ALPHA ADAPTATIVO
@@ -130,9 +126,9 @@ def texture_map(base_gray_float, ksize=3):
 
 def render_modulated_qr_hsv(
     qr_matrix,
-    base_bgr_small,     # (H,W,3) 0..255
-    perceptual_small,   # (H,W) 0..1
-    texture_small,      # (H,W) 0..1
+    base_bgr_small,
+    perceptual_small,
+    texture_small,
     module_size,
     alpha_min=0.20,
     alpha_max=0.72,
@@ -165,7 +161,6 @@ def render_modulated_qr_hsv(
 # ======================================================
 
 def make_tag(params):
-    # tag curta, mas informativa
     return (
         f"ms{params['module_size']}"
         f"_a{params['alpha_min']:.2f}-{params['alpha_max']:.2f}"
@@ -176,14 +171,65 @@ def make_tag(params):
     )
 
 # ======================================================
+# HISTOGRAMAS — salvar (não mostrar)
+# ======================================================
+
+def gray_and_equalized_for_hist(image_path, target_shape):
+    img_bgr = cv2.imread(image_path, cv2.IMREAD_COLOR)
+    if img_bgr is None:
+        raise ValueError(f"Imagem não encontrada: {image_path}")
+
+    img_bgr = center_crop_square(img_bgr)
+    H, W = target_shape
+    img_bgr = cv2.resize(img_bgr, (W, H), interpolation=cv2.INTER_AREA)
+
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    gray_eq = cv2.equalizeHist(gray)
+    return gray, gray_eq
+
+def hist_256(gray_u8):
+    h, _ = np.histogram(gray_u8.flatten(), bins=256, range=(0, 256))
+    return h
+
+def save_histograms_two_images(base_dir, target_shape, out_dir):
+    imgs = [
+        ("FERB", os.path.join(base_dir, "imagens_base", "FERB.jpg")),
+        ("homer", os.path.join(base_dir, "imagens_base", "homer.png")),
+    ]
+
+    for name, path in imgs:
+        gray, gray_eq = gray_and_equalized_for_hist(path, target_shape)
+        h0 = hist_256(gray)
+        h1 = hist_256(gray_eq)
+
+        plt.figure(figsize=(8, 4))
+        plt.plot(h0, label="Cinza (antes)")
+        plt.plot(h1, label="Cinza equalizado (depois)")
+        plt.title(f"Histograma (256 bins) — {name}")
+        plt.xlabel("Intensidade (0–255)")
+        plt.ylabel("Contagem de pixels")
+        plt.legend()
+        plt.tight_layout()
+
+        out_png = os.path.join(out_dir, f"hist_{name}_before_after_equalize.png")
+        plt.savefig(out_png, dpi=200)
+        plt.close()
+
+        print(f"[OK] Histograma salvo: {out_png}")
+
+# ======================================================
 # EXECUÇÃO EM LOTE
 # ======================================================
 
 if __name__ == "__main__":
     print("Iniciando - Batch QR com modulacao HSV + alpha adaptativo")
 
+    # gera QR uma vez
     qr_matrix = generate_qr_matrix(DATA, QR_VERSION, ERROR_CORRECTION, border=BORDER)
     print("Dimensao do QR (modulos):", qr_matrix.shape)
+
+    # salva histogramas 1x (antes do batch)
+    save_histograms_two_images(BASE_DIR, qr_matrix.shape, HIST_DIR)
 
     # prepara combinações do grid
     keys = list(GRID.keys())
@@ -196,7 +242,6 @@ if __name__ == "__main__":
             print(f"[ERRO] Imagem nao encontrada: {image_path}")
             continue
 
-        # subpasta por imagem
         stem = os.path.splitext(img_name)[0]
         out_dir = os.path.join(OUTPUT_ROOT, stem)
         os.makedirs(out_dir, exist_ok=True)
@@ -206,7 +251,6 @@ if __name__ == "__main__":
         base_bgr_small, base_gray_small = preprocess_base_image_color(image_path, qr_matrix.shape)
         edge_map = edge_enhanced_map(base_gray_small)
 
-        # para cada combinação
         for values in combos:
             params = dict(zip(keys, values))
 
@@ -231,7 +275,6 @@ if __name__ == "__main__":
             out_dbg = os.path.join(out_dir, f"percept_{stem}_{tag}.png")
 
             ok = cv2.imwrite(out_png, final_qr_bgr)
-            # mapa perceptual para depuração (opcional, mas útil)
             plt.imsave(out_dbg, perceptual, cmap="gray")
 
             if not ok:
